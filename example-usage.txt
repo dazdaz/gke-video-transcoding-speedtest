@@ -1,0 +1,389 @@
+# example-usage.txt
+
+# FFmpeg GPU Parallel Transcoding - Usage Examples
+
+## Table of Contents
+1. Basic Usage
+2. GCS Integration
+3. Performance Tuning
+4. Monitoring and Debugging
+5. Advanced Scenarios
+
+================================================================================
+## 1. BASIC USAGE
+================================================================================
+
+### Simple NVENC Test
+# Generate a test video and encode with NVENC
+./03-transcode-test.py --encoder-type nvenc --gpu-model T4 --num-replicas 1
+
+### CPU Encoding Test (for comparison)
+./03-transcode-test.py --encoder-type cpu --num-replicas 4
+
+### Specify Number of Streams
+./03-transcode-test.py \
+  --encoder-type nvenc \
+  --gpu-model T4 \
+  --num-replicas 1 \
+  --streams-per-gpu 8
+
+### Use Different GPU Model
+./03-transcode-test.py \
+  --encoder-type nvenc \
+  --gpu-model L4 \
+  --num-replicas 2
+
+================================================================================
+## 2. GCS INTEGRATION
+================================================================================
+
+### Process All Files from GCS Bucket
+# This will process ALL .mp4 files found in the input bucket
+./03-transcode-test.py \
+  --mode gcs \
+  --encoder-type nvenc \
+  --gpu-model T4 \
+  --num-replicas 2 \
+  --gcs-input-bucket transcode-preprocessing-bucket \
+  --gcs-output-bucket transcode-postprocessing-bucket
+
+### Process with Custom Buckets
+./03-transcode-test.py \
+  --mode gcs \
+  --encoder-type nvenc \
+  --gpu-model L4 \
+  --num-replicas 4 \
+  --gcs-input-bucket my-input-videos \
+  --gcs-output-bucket my-output-videos
+
+### High-Concurrency GCS Processing
+# 8 pods, each processing files from the bucket
+./03-transcode-test.py \
+  --mode gcs \
+  --encoder-type nvenc \
+  --gpu-model L4 \
+  --num-replicas 8 \
+  --gcs-input-bucket large-video-bucket \
+  --gcs-output-bucket transcoded-videos
+
+================================================================================
+## 3. PERFORMANCE TUNING
+================================================================================
+
+### Fastest Encoding (Quality Trade-off)
+./03-transcode-test.py \
+  --encoder-type nvenc \
+  --gpu-model T4 \
+  --preset p1 \
+  --rc-mode cbr \
+  --num-replicas 1
+
+### Best Quality (Slower)
+./03-transcode-test.py \
+  --encoder-type nvenc \
+  --gpu-model T4 \
+  --preset p7 \
+  --rc-mode vbr \
+  --num-replicas 1
+
+### Balanced Performance
+./03-transcode-test.py \
+  --encoder-type nvenc \
+  --gpu-model T4 \
+  --preset p4 \
+  --rc-mode vbr \
+  --num-replicas 2
+
+### Maximum Throughput
+# Multiple GPUs with optimal stream count
+./03-transcode-test.py \
+  --encoder-type nvenc \
+  --gpu-model L4 \
+  --num-replicas 8 \
+  --preset p3 \
+  --mode gcs \
+  --gcs-input-bucket bulk-videos \
+  --gcs-output-bucket processed-videos
+
+================================================================================
+## 4. MONITORING AND DEBUGGING
+================================================================================
+
+### Fire-and-Forget Mode
+# Don't wait for completion, job runs in background
+./03-transcode-test.py \
+  --encoder-type nvenc \
+  --gpu-model T4 \
+  --num-replicas 2 \
+  --no-wait
+
+# Then monitor manually:
+kubectl get jobs -l app=ffmpeg-gpu-parallel-nvenc
+kubectl logs -l app=ffmpeg-gpu-parallel-nvenc --tail=100 -f
+
+### Keep Job for Inspection
+# Don't auto-cleanup after completion
+./03-transcode-test.py \
+  --encoder-type nvenc \
+  --gpu-model T4 \
+  --num-replicas 1 \
+  --no-auto-cleanup
+
+# Inspect the job:
+kubectl get pods -l app=ffmpeg-gpu-parallel-nvenc
+kubectl describe pod <pod-name>
+kubectl logs <pod-name>
+
+# Manually cleanup when done:
+kubectl delete job <job-name>
+
+### Dry Run (Generate YAML Only)
+./03-transcode-test.py \
+  --encoder-type nvenc \
+  --gpu-model T4 \
+  --num-replicas 1 \
+  --no-apply
+
+# This creates the YAML file but doesn't deploy it
+# You can then inspect and manually apply:
+kubectl apply -f ffmpeg-gpu-parallel-nvenc-*.yaml
+
+### Real-Time GPU Monitoring
+# In a separate terminal while job runs:
+kubectl get pods -l app=ffmpeg-gpu-parallel-nvenc
+kubectl exec -it <pod-name> -- nvidia-smi -l 1
+
+# Or check NVENC sessions:
+kubectl exec -it <pod-name> -- nvidia-smi nvenc --query
+
+================================================================================
+## 5. ADVANCED SCENARIOS
+================================================================================
+
+### Estimate Optimal Stream Count First
+./nvenc_stream_estimator.py T4 H.264 p4 VBR 30 --nvenc_units 1
+
+# Use the result in your test:
+./03-transcode-test.py \
+  --encoder-type nvenc \
+  --gpu-model T4 \
+  --streams-per-gpu <estimated-count> \
+  --num-replicas 1
+
+### Different GPU Models
+# T4 GPU (1 NVENC chip)
+./nvenc_stream_estimator.py T4 H.264 p3 CBR 30 --nvenc_units 1
+./03-transcode-test.py --encoder-type nvenc --gpu-model T4 --num-replicas 1
+
+# L4 GPU (2 NVENC chips)
+./nvenc_stream_estimator.py L4 H.264 p3 CBR 30 --nvenc_units 2
+./03-transcode-test.py --encoder-type nvenc --gpu-model L4 --num-replicas 1
+
+# H100 GPU (3 NVENC chips)
+./nvenc_stream_estimator.py H100 H.264 p3 VBR 30 --nvenc_units 3
+./03-transcode-test.py --encoder-type nvenc --gpu-model H100 --num-replicas 1
+
+### Custom Job Naming
+./03-transcode-test.py \
+  --encoder-type nvenc \
+  --gpu-model T4 \
+  --num-replicas 1 \
+  --job-suffix my-test-run
+
+### Skip Node Pool Check
+# Use any available GPU node
+./03-transcode-test.py \
+  --encoder-type nvenc \
+  --gpu-model T4 \
+  --num-replicas 1 \
+  --skip-node-check
+
+### High-Quality 4K Processing
+./03-transcode-test.py \
+  --mode gcs \
+  --encoder-type nvenc \
+  --gpu-model L4 \
+  --preset p7 \
+  --rc-mode vbr \
+  --num-replicas 4 \
+  --gcs-input-bucket 4k-raw-footage \
+  --gcs-output-bucket 4k-encoded
+
+================================================================================
+## COMPLETE WORKFLOW EXAMPLES
+================================================================================
+
+### Example 1: Production GCS Processing Pipeline
+
+# Step 1: Build and deploy container
+./01-build-container.sh
+
+# Step 2: Configure IAM permissions
+./02-iam-roles.sh
+
+# Step 3: Estimate optimal streams
+./nvenc_stream_estimator.py L4 H.264 p4 VBR 30 --nvenc_units 2
+
+# Step 4: Run batch processing
+./03-transcode-test.py \
+  --mode gcs \
+  --encoder-type nvenc \
+  --gpu-model L4 \
+  --num-replicas 8 \
+  --streams-per-gpu 16 \
+  --preset p4 \
+  --rc-mode vbr \
+  --gcs-input-bucket production-raw-videos \
+  --gcs-output-bucket production-transcoded
+
+# Step 5: Monitor progress
+kubectl get jobs -w
+kubectl logs -l app=ffmpeg-gpu-parallel-nvenc --tail=100 -f
+
+### Example 2: Performance Testing and Benchmarking
+
+# Test 1: CPU baseline
+./03-transcode-test.py \
+  --encoder-type cpu \
+  --num-replicas 4 \
+  --job-suffix cpu-baseline
+
+# Test 2: Single GPU NVENC
+./03-transcode-test.py \
+  --encoder-type nvenc \
+  --gpu-model T4 \
+  --num-replicas 1 \
+  --streams-per-gpu 4 \
+  --job-suffix single-gpu-4-streams
+
+# Test 3: Single GPU with more streams
+./03-transcode-test.py \
+  --encoder-type nvenc \
+  --gpu-model T4 \
+  --num-replicas 1 \
+  --streams-per-gpu 8 \
+  --job-suffix single-gpu-8-streams
+
+# Test 4: Multiple GPUs
+./03-transcode-test.py \
+  --encoder-type nvenc \
+  --gpu-model T4 \
+  --num-replicas 4 \
+  --streams-per-gpu 6 \
+  --job-suffix multi-gpu-test
+
+# Compare results from logs
+
+### Example 3: Quality vs Speed Testing
+
+# Fastest (p1)
+./03-transcode-test.py \
+  --encoder-type nvenc \
+  --preset p1 \
+  --job-suffix preset-p1-fast
+
+# Balanced (p4)
+./03-transcode-test.py \
+  --encoder-type nvenc \
+  --preset p4 \
+  --job-suffix preset-p4-balanced
+
+# Best Quality (p7)
+./03-transcode-test.py \
+  --encoder-type nvenc \
+  --preset p7 \
+  --job-suffix preset-p7-quality
+
+================================================================================
+## TROUBLESHOOTING COMMANDS
+================================================================================
+
+### Check GPU Availability
+kubectl get nodes -l nvidia.com/gpu=present
+kubectl describe nodes | grep -A 5 nvidia.com/gpu
+
+### View Job Status
+kubectl get jobs -l app=ffmpeg-gpu-parallel-nvenc
+kubectl describe job <job-name>
+
+### Check Pod Logs
+kubectl get pods -l app=ffmpeg-gpu-parallel-nvenc
+kubectl logs <pod-name> --tail=200
+kubectl logs <pod-name> -f  # Follow logs
+
+### Debug Failed Pods
+kubectl describe pod <pod-name>
+kubectl get events --sort-by='.lastTimestamp'
+
+### Check Service Account
+kubectl get serviceaccount gke-tp-service-account -o yaml
+kubectl describe serviceaccount gke-tp-service-account
+
+### Verify GCS Access
+kubectl run -it --rm debug --image=google/cloud-sdk:alpine --restart=Never -- gsutil ls gs://transcode-preprocessing-bucket
+
+### Monitor GPU in Real-Time
+kubectl exec -it <pod-name> -- nvidia-smi -l 1
+kubectl exec -it <pod-name> -- nvidia-smi nvenc --query
+
+### Check NVENC Sessions
+kubectl exec -it <pod-name> -- nvidia-smi nvenc -s
+
+### View Cloud Logging (GCP Console)
+./show-gcp-logging-pod.sh
+
+================================================================================
+## CLEANUP
+================================================================================
+
+### Manual Cleanup
+kubectl delete job <job-name>
+kubectl delete pods -l app=ffmpeg-gpu-parallel-nvenc
+
+### Delete All Test Jobs
+kubectl delete jobs -l app=ffmpeg-gpu-parallel-nvenc
+
+### Clean Up YAML Files
+rm ffmpeg-gpu-parallel-nvenc-*.yaml
+
+================================================================================
+## NOTES AND TIPS
+================================================================================
+
+1. Always start with a small test before scaling up
+2. Monitor GPU utilization to ensure efficient use
+3. Use --no-wait for long-running batch jobs
+4. Keep --no-auto-cleanup for debugging failed jobs
+5. Check GCS bucket permissions if uploads fail
+6. Use nvenc_stream_estimator.py to find optimal settings
+7. Consider network bandwidth when using GCS mode
+8. T4 GPUs work best with 4-8 streams for 4K content
+9. L4 GPUs can handle 16-20 streams for 1080p content
+10. Always verify output quality before production use
+
+================================================================================
+## PERFORMANCE EXPECTATIONS
+================================================================================
+
+### T4 GPU (1 NVENC chip)
+- 1080p @ 30fps: 8-10 streams
+- 4K @ 30fps: 4-6 streams
+- Real-time factor: 5-8x for 1080p
+
+### L4 GPU (2 NVENC chips)  
+- 1080p @ 30fps: 16-20 streams
+- 4K @ 30fps: 8-12 streams
+- Real-time factor: 10-15x for 1080p
+
+### A100 GPU (5 NVENC chips)
+- 1080p @ 30fps: 40-50 streams
+- 4K @ 30fps: 20-25 streams
+- Real-time factor: 25-30x for 1080p
+
+These are approximate values. Actual performance varies based on:
+- Input video complexity
+- Encoding preset
+- Rate control mode
+- System resources (CPU, memory, network)
+
+================================================================================
